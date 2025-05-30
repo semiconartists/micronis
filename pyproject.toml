@@ -1,0 +1,25 @@
+[project]
+name = "micron-challenge"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "marimo[lsp,recommended]>=0.13.4",
+    "pandas>=2.2.3",
+    "seaborn>=0.13.2",
+]
+
+[tool.marimo.experimental]
+lsp = true
+
+[tool.marimo.language_servers.pylsp]
+enabled = true               # Enable/disable the Python language server
+enable_mypy = true           # Type checking with mypy (enabled by default, if installed)
+enable_ruff = true           # Linting with ruff (enabled by default, if installed)
+enable_flake8 = false        # Linting with flake8
+enable_pydocstyle = false    # Check docstring style
+enable_pylint = false        # Linting with pylint
+enable_pyflakes = false      # Syntax checking with pyflakes
+
+[tool.marimo.diagnostics]
+enabled = true               # Show diagnostics in the editor
