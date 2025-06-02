@@ -92,11 +92,17 @@ def _(load_concat):
     if not incoming_run_data_df.empty:
         incoming_run_data_df.info()
     incoming_run_data_df.nunique()
-    return
+    return (incoming_run_data_df,)
 
 
 @app.cell
-def _():
+def _(incoming_run_data_df):
+    pivoted_run_data_df = incoming_run_data_df.pivot_table(
+        index = ["Run ID", "Time Stamp"], 
+        columns = "Sensor Name",
+        values = "Sensor Value"
+    )
+    pivoted_run_data_df.head()
     return
 
 
