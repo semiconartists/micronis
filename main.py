@@ -83,7 +83,7 @@ def _(all_run_data_df):
         rem_NAs = pivot_df_filled.isnull().sum().sum()
     rem_NAs
     pivot_df_filled.head()
-    return
+    return (pivot_df_filled,)
 
 
 @app.cell
@@ -103,6 +103,21 @@ def _(incoming_run_data_df):
         values = "Sensor Value"
     )
     pivoted_run_data_df.head()
+    return (pivoted_run_data_df,)
+
+
+@app.cell
+def _(pd, pivot_df_filled, pivoted_run_data_df):
+    all_combined_df = pd.concat([pivot_df_filled, pivoted_run_data_df])
+    all_combined_df_sorted = all_combined_df.sort_values(
+        by=['Run ID', 'Time Stamp']
+    )
+    all_combined_df_sorted.nunique()
+    return
+
+
+@app.cell
+def _():
     return
 
 
