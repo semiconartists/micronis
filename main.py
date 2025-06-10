@@ -122,7 +122,6 @@ def _(pd, pivot_df_filled, pivoted_run_data_df):
 def _(all_combined_df_sorted, linregress, pd):
     identifier_cols = ["Run ID", "Time Stamp"]
     sensor_cols = [col for col in all_combined_df_sorted if col not in identifier_cols]
-    # Feature Engineering Function
     def time_series_feats(group, sensor_columns):
         features = {}
         for sensor in sensor_cols:
@@ -136,7 +135,6 @@ def _(all_combined_df_sorted, linregress, pd):
             features[f'{sensor}_max'] = values.max()
 
             if values.var() > 1e-9:
-                # Use timestamps corresponding to non-NaN values
                 valid_timestamps = timeStamps[values.index]
                 numeric_timestamps = (valid_timestamps - valid_timestamps.iloc[0]).dt.total_seconds()
                 slope, _, _, _, _ = linregress(x=numeric_timestamps, y=values)
