@@ -10,8 +10,9 @@ def _():
     import marimo as mo
     import pandas as pd
     import glob
-    import os 
-    return glob, os, pd
+    import os
+    from scipy.stats import linregress
+    return glob, linregress, os, pd
 
 
 @app.cell
@@ -82,7 +83,7 @@ def _(all_run_data_df):
         pivot_df_filled = pivoted_df.groupby(level = 'Run ID', group_keys=False).apply(fill_na)
         rem_NAs = pivot_df_filled.isnull().sum().sum()
     rem_NAs
-    pivot_df_filled.head()
+    pivot_df_filled = pivot_df_filled.reset_index()
     return (pivot_df_filled,)
 
 
@@ -102,7 +103,8 @@ def _(incoming_run_data_df):
         columns = "Sensor Name",
         values = "Sensor Value"
     )
-    pivoted_run_data_df.head()
+    pivoted_run_data_df = pivoted_run_data_df.reset_index()
+    pivoted_run_data_df.columns
     return (pivoted_run_data_df,)
 
 
@@ -112,12 +114,42 @@ def _(pd, pivot_df_filled, pivoted_run_data_df):
     all_combined_df_sorted = all_combined_df.sort_values(
         by=['Run ID', 'Time Stamp']
     )
-    all_combined_df_sorted.nunique()
-    return
+    all_combined_df_sorted.columns
+    return (all_combined_df_sorted,)
 
 
 @app.cell
-def _():
+def _(all_combined_df_sorted, linregress, pd):
+    identifier_cols = ["Run ID", "Time Stamp"]
+    sensor_cols = [col for col in all_combined_df_sorted if col not in identifier_cols]
+    # Feature Engineering Function
+    def time_series_feats(group, sensor_columns):
+        features = {}
+        for sensor in sensor_cols:
+            temp_df = group[['Time Stamp', sensor]].copy()
+            temp_df.dropna(subset=[sensor], inplace = True)
+            values = temp_df[sensor].dropna()
+            timeStamps = temp_df["Time Stamp"]
+            features[f'{sensor}_mean'] = values.mean()
+            features[f'{sensor}_std_dev'] = values.std()
+            features[f'{sensor}_min'] = values.min()
+            features[f'{sensor}_max'] = values.max()
+
+            if values.var() > 1e-9:
+                # Use timestamps corresponding to non-NaN values
+                valid_timestamps = timeStamps[values.index]
+                numeric_timestamps = (valid_timestamps - valid_timestamps.iloc[0]).dt.total_seconds()
+                slope, _, _, _, _ = linregress(x=numeric_timestamps, y=values)
+                features[f'{sensor}_trend_slope'] = slope
+            else:
+                features[f'{sensor}_trend_slope'] = 0.0
+
+        return pd.Series(features)
+
+    run_level_features_df = all_combined_df_sorted.groupby("Run ID").apply(
+        time_series_feats, sensor_columns = sensor_cols
+    ).fillna(0)
+    run_level_features_df.head()
     return
 
 
