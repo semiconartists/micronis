@@ -42,8 +42,7 @@ def _(load_concat):
     all_run_data_df = load_concat("./data/train/", "run_data_*.parquet")
     if not all_run_data_df.empty:
         all_run_data_df.info()
-    all_run_data_df.head()
-    all_run_data_df.nunique()
+    all_run_data_df.shape
     return (all_run_data_df,)
 
 
@@ -84,6 +83,7 @@ def _(all_run_data_df):
         rem_NAs = pivot_df_filled.isnull().sum().sum()
     rem_NAs
     pivot_df_filled = pivot_df_filled.reset_index()
+    pivot_df_filled.head()
     return (pivot_df_filled,)
 
 
@@ -153,7 +153,7 @@ def _(all_combined_df_sorted, linregress, pd):
 
 @app.cell
 def _(all_run_data_df):
-    static_feature_columns = ["Consumable Life"]
+    static_feature_columns = ["Consumable Life", "Tool ID"]
     agg_dict_static = {col: 'first' for col in static_feature_columns}
     static_feature_df = all_run_data_df.groupby("Run ID").agg(agg_dict_static)
     static_feature_df.head()
@@ -171,8 +171,6 @@ def _(pd, run_level_features_df, static_feature_df):
         right_index = True
     )
     final_features_df = final_features_df.reset_index()
-    final_features_df.head()
-    final_features_df.columns
     return
 
 
