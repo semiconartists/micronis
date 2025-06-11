@@ -171,11 +171,32 @@ def _(pd, run_level_features_df, static_feature_df):
         right_index = True
     )
     final_features_df = final_features_df.reset_index()
-    return
+    return (final_features_df,)
 
 
 @app.cell
-def _():
+def _(load_concat):
+    final_coordinates_df = load_concat("./data/train/", "metrology_data*.parquet")
+    final_coordinates_df.head()
+    target_df = final_coordinates_df.pivot_table(
+        index = "Run ID",
+        columns="Point Index",
+        values="Measurement"
+    )
+    target_df = target_df.reset_index()
+    target_df
+    return (target_df,)
+
+
+@app.cell
+def _(final_features_df, pd, target_df):
+    training_df = pd.merge(
+        left = final_features_df,
+        right = target_df, 
+        how = "inner", 
+        on = "Run ID"
+    )
+    training_df.shape
     return
 
 
