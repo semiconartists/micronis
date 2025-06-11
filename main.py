@@ -11,8 +11,31 @@ def _():
     import pandas as pd
     import glob
     import os
+    import numpy as np
     from scipy.stats import linregress
-    return glob, linregress, os, pd
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
+    import torch
+    from torch.utils.data import TensorDataset, DataLoader
+    from sklearn.preprocessing import LabelEncoder
+    import torch.nn as nn
+    import torch.optim as optim
+    import plotly.express as px
+    return (
+        DataLoader,
+        LabelEncoder,
+        TensorDataset,
+        glob,
+        linregress,
+        mo,
+        nn,
+        np,
+        optim,
+        os,
+        pd,
+        torch,
+        train_test_split,
+    )
 
 
 @app.cell
@@ -197,6 +220,221 @@ def _(final_features_df, pd, target_df):
         on = "Run ID"
     )
     training_df.shape
+
+    return (training_df,)
+
+
+@app.cell
+def _(
+    DataLoader,
+    LabelEncoder,
+    TensorDataset,
+    np,
+    torch,
+    train_test_split,
+    training_df,
+):
+    target_columns = [i for i in range(0, 49)]
+    feature_columns = [col for col in training_df if col not in target_columns]
+    feature_columns.pop(0)
+    y = training_df[target_columns].values.astype(np.float32)
+    X = training_df[feature_columns].values
+    # Step 1: extract all Tool IDs (second-last column)
+    tool_ids = [row[-1] for row in X]
+
+    # Step 2: encode them
+    le = LabelEncoder()
+    encoded_tool_ids = le.fit_transform(tool_ids)
+
+    # Step 3: overwrite second-last column in each row
+    for i in range(len(X)):
+        X[i][-1] = float(encoded_tool_ids[i])
+    X = X.astype(np.float32)
+
+    # --- 1b. Create Training, Validation, and Test Sets ---
+    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+
+    # --- 1c. Convert NumPy arrays to PyTorch Tensors ---
+    X_train_tensor = torch.from_numpy(X_train)
+    y_train_tensor = torch.from_numpy(y_train)
+
+    X_val_tensor = torch.from_numpy(X_val)
+    y_val_tensor = torch.from_numpy(y_val)
+
+    X_test_tensor = torch.from_numpy(X_test)
+    y_test_tensor = torch.from_numpy(y_test)
+
+    # --- 1d. Create PyTorch DataLoaders ---
+    # DataLoaders handle batching, shuffling, etc. automatically.
+    BATCH_SIZE = 32
+
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+    val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
+
+
+
+    return X_train, test_loader, train_loader, val_loader, y_train
+
+
+@app.cell
+def _(X_train, nn, torch, y_train):
+    num_features = X_train.shape[1]
+    num_outputs = y_train.shape[1]
+
+    class MLP(nn.Module):
+        def __init__(self, num_features, num_outputs):
+            super(MLP, self).__init__()
+            self.layers = nn.Sequential(
+                # Input Layer
+                nn.Linear(num_features, 256),
+                nn.ReLU(),
+                nn.BatchNorm1d(256),
+                nn.Dropout(0.3),
+
+                # Hidden Layer 1
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.BatchNorm1d(128),
+                nn.Dropout(0.3),
+
+                # Hidden Layer 2
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.BatchNorm1d(64),
+
+                # Output Layer
+                nn.Linear(64, num_outputs)
+            )
+
+        def forward(self, x):
+            return self.layers(x)
+
+    # Instantiate the model
+    pytorch_model = MLP(num_features, num_outputs)
+
+    # Move model to GPU if available (optional but recommended)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    pytorch_model.to(device)
+    pytorch_model
+    return device, pytorch_model
+
+
+@app.cell
+def _(
+    device,
+    mo,
+    nn,
+    np,
+    optim,
+    pytorch_model,
+    test_loader,
+    torch,
+    train_loader,
+    val_loader,
+):
+    loss_fn = nn.MSELoss()
+    optimizer = optim.Adam(pytorch_model.parameters(), lr=0.001)
+    EPOCHS = 50
+
+    # --- Training Loop ---
+    # Lists to store loss history for plotting
+    train_losses = []
+    val_losses = []
+
+
+    for epoch in range(EPOCHS):
+        # --- Training Phase ---
+        pytorch_model.train() # Set the model to training mode (enables dropout, etc.)
+        batch_train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            # Move data to the same device as the model
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+
+            # 1. Forward pass: compute predicted y by passing x to the model
+            y_pred = pytorch_model(X_batch)
+
+            # 2. Calculate loss
+            loss = loss_fn(y_pred, y_batch)
+            batch_train_loss += loss.item() # .item() gets the scalar value of the loss
+
+            # 3. Zero gradients: clear the gradients of all optimized variables
+            optimizer.zero_grad()
+
+            # 4. Backward pass: compute gradient of the loss with respect to model parameters
+            loss.backward()
+
+            # 5. Update weights: call step() to cause the optimizer to update the parameters
+            optimizer.step()
+
+        # Calculate average training loss for the epoch
+        avg_train_loss = batch_train_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
+
+        # --- Validation Phase ---
+        pytorch_model.eval() # Set the model to evaluation mode (disables dropout, etc.)
+        batch_val_loss = 0.0
+        with torch.no_grad(): # In validation, we don't need to compute gradients
+            for X_batch, y_batch in val_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                y_pred = pytorch_model(X_batch)
+                loss = loss_fn(y_pred, y_batch)
+                batch_val_loss += loss.item()
+
+        # Calculate average validation loss for the epoch
+        avg_val_loss = batch_val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
+
+        # Print progress for each epoch
+        print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+
+    print("Training complete.")
+
+    # --- Evaluation Loop ---
+    
+        # 1. Set the model to evaluation mode.
+        # This is crucial as it disables layers like Dropout.
+    pytorch_model.eval()
+    
+        # Variable to accumulate the loss
+    total_test_loss = 0.0
+    
+        # 2. Disable gradient calculations to save memory and computation
+    with torch.no_grad():
+        # 3. Loop through the test data loader
+        for X_batch, y_batch in test_loader:
+            # Move data to the same device as the model
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        
+            # Make predictions
+            y_pred = pytorch_model(X_batch)
+        
+            # Calculate the loss (MSE) for this batch
+            loss = loss_fn(y_pred, y_batch)
+        
+            # Accumulate the loss
+            # We multiply by the batch size to get the total sum of squared errors,
+            # which is more accurate than averaging averages if the last batch is smaller.
+            total_test_loss += loss.item() * X_batch.size(0)
+
+    # 4. Calculate the final average Mean Squared Error (MSE)
+    # Divide the total loss by the total number of samples in the test set
+    avg_test_mse = total_test_loss / len(test_loader.dataset)
+
+    # 5. Calculate the Root Mean Squared Error (RMSE)
+    final_rmse = np.sqrt(avg_test_mse)
+
+    # --- Display the Results ---
+    mo.md("#### Final Model Performance on Unseen Test Data:")
+    mo.md(f"- **Average Test MSE**: {avg_test_mse:.6f}")
+    mo.md(f"### **Final Test RMSE**: {final_rmse:.6f}")
+
     return
 
 
