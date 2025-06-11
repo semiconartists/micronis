@@ -148,6 +148,36 @@ def _(all_combined_df_sorted, linregress, pd):
         time_series_feats, sensor_columns = sensor_cols
     ).fillna(0)
     run_level_features_df.head()
+    return (run_level_features_df,)
+
+
+@app.cell
+def _(all_run_data_df):
+    static_feature_columns = ["Consumable Life"]
+    agg_dict_static = {col: 'first' for col in static_feature_columns}
+    static_feature_df = all_run_data_df.groupby("Run ID").agg(agg_dict_static)
+    static_feature_df.head()
+    return (static_feature_df,)
+
+
+@app.cell
+def _(pd, run_level_features_df, static_feature_df):
+    # Merge Consumbale life to df
+    final_features_df = pd.merge(
+        left = run_level_features_df,
+        right = static_feature_df,
+        how="left",
+        left_index = True,
+        right_index = True
+    )
+    final_features_df = final_features_df.reset_index()
+    final_features_df.head()
+    final_features_df.columns
+    return
+
+
+@app.cell
+def _():
     return
 
 
