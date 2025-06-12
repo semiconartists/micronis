@@ -21,10 +21,15 @@ def _():
     import torch.nn as nn
     import torch.optim as optim
     import plotly.express as px
+    from scipy.signal import find_peaks # New import for peak finding
+    from statsmodels.tsa.stattools import acf # New import for autocorrelation
     return (
         DataLoader,
         LabelEncoder,
+        StandardScaler,
         TensorDataset,
+        acf,
+        find_peaks,
         glob,
         linregress,
         mo,
@@ -142,7 +147,7 @@ def _(pd, pivot_df_filled, pivoted_run_data_df):
 
 
 @app.cell
-def _(all_combined_df_sorted, linregress, pd):
+def _(acf, all_combined_df_sorted, find_peaks, linregress, np, pd):
     identifier_cols = ["Run ID", "Time Stamp"]
     sensor_cols = [col for col in all_combined_df_sorted if col not in identifier_cols]
     def time_series_feats(group, sensor_columns):
@@ -165,6 +170,19 @@ def _(all_combined_df_sorted, linregress, pd):
             else:
                 features[f'{sensor}_trend_slope'] = 0.0
 
+            peak_indices, _ = find_peaks(values, height=values.mean())
+            features[f'{sensor}_num_peaks'] = len(peak_indices)
+
+            autocorr_values = acf(values, nlags=10, fft=True)
+            features[f'{sensor}_acf_lag1'] = autocorr_values[1] if len(autocorr_values) > 1 else 0
+            features[f'{sensor}_acf_sum_first5'] = np.sum(autocorr_values[1:6]) if len(autocorr_values) > 5 else 0
+            lags_below_threshold = np.where(np.abs(autocorr_values[1:]) < 0.2)[0]
+            if len(lags_below_threshold) > 0:
+                # Add 1 because index 0 corresponds to lag 1
+                first_lag = lags_below_threshold[0] + 1
+                features[f'{sensor}_acf_first_lag_below_0.2'] = first_lag
+            else:
+                features[f'{sensor}_acf_first_lag_below_0.2'] = 11
         return pd.Series(features)
 
     run_level_features_df = all_combined_df_sorted.groupby("Run ID").apply(
@@ -228,6 +246,7 @@ def _(final_features_df, pd, target_df):
 def _(
     DataLoader,
     LabelEncoder,
+    StandardScaler,
     TensorDataset,
     np,
     torch,
@@ -254,6 +273,12 @@ def _(
     # --- 1b. Create Training, Validation, and Test Sets ---
     X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2, random_state=42)
     X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+    scaler = StandardScaler()
+    scaler = scaler.fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_val = scaler.transform(X_val)
+    X_test = scaler.transform(X_test)
+
 
     # --- 1c. Convert NumPy arrays to PyTorch Tensors ---
     X_train_tensor = torch.from_numpy(X_train)
@@ -323,7 +348,7 @@ def _(X_train, nn, torch, y_train):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     pytorch_model.to(device)
     pytorch_model
-    return device, pytorch_model
+    return MLP, device, num_features, num_outputs, pytorch_model
 
 
 @app.cell
@@ -341,7 +366,7 @@ def _(
 ):
     loss_fn = nn.MSELoss()
     optimizer = optim.Adam(pytorch_model.parameters(), lr=0.001)
-    EPOCHS = 50
+    EPOCHS = 200
 
     # --- Training Loop ---
     # Lists to store loss history for plotting
@@ -397,27 +422,27 @@ def _(
     print("Training complete.")
 
     # --- Evaluation Loop ---
-    
+
         # 1. Set the model to evaluation mode.
         # This is crucial as it disables layers like Dropout.
     pytorch_model.eval()
-    
+
         # Variable to accumulate the loss
     total_test_loss = 0.0
-    
+
         # 2. Disable gradient calculations to save memory and computation
     with torch.no_grad():
         # 3. Loop through the test data loader
         for X_batch, y_batch in test_loader:
             # Move data to the same device as the model
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-        
+
             # Make predictions
             y_pred = pytorch_model(X_batch)
-        
+
             # Calculate the loss (MSE) for this batch
             loss = loss_fn(y_pred, y_batch)
-        
+
             # Accumulate the loss
             # We multiply by the batch size to get the total sum of squared errors,
             # which is more accurate than averaging averages if the last batch is smaller.
@@ -435,6 +460,132 @@ def _(
     mo.md(f"- **Average Test MSE**: {avg_test_mse:.6f}")
     mo.md(f"### **Final Test RMSE**: {final_rmse:.6f}")
 
+    return
+
+
+@app.cell
+def _(mo, pytorch_model, torch):
+    ## SAVING MODEL
+
+    # Define a path to save the model
+    MODEL_SAVE_PATH = "semiconartists_model.pth" # .pth or .pt are common extensions
+
+    # Save the model's state dictionary
+    torch.save(pytorch_model.state_dict(), MODEL_SAVE_PATH)
+
+    mo.md(f"Model weights successfully saved to: **`{MODEL_SAVE_PATH}`**")
+    return (MODEL_SAVE_PATH,)
+
+
+@app.cell
+def _(MLP, MODEL_SAVE_PATH, device, mo, num_features, num_outputs, torch):
+    ## LOADING MODEL 
+
+    # 1. First, you must create an instance of the model with the same architecture.
+    # The model must have the same layers and shapes as the one you saved.
+    # Assume 'num_features' and 'num_outputs' are defined.
+    loaded_model = MLP(num_features, num_outputs)
+
+    # 2. Load the state dictionary from the file
+    loaded_model.load_state_dict(torch.load(MODEL_SAVE_PATH))
+
+    # 3. IMPORTANT: Set the model to evaluation mode
+    loaded_model.eval()
+
+    # Move the model to the correct device (cpu/gpu)
+    loaded_model.to(device)
+
+    mo.md("Model weights successfully loaded and model is ready for inference.")
+    return (loaded_model,)
+
+
+@app.cell
+def _(X_competition_test, device, loaded_model, mo, np, torch):
+    ## USING MODEL FOR PREDICTION
+
+
+    # Assume 'loaded_model' is your trained model, ready for inference.
+    # Assume 'X_competition_test' is your preprocessed competition feature set (as a NumPy array).
+
+    # --- 1. Prepare the Competition Data ---
+    # Convert the NumPy array to a PyTorch tensor and move to the correct device
+    X_competition_tensor = torch.from_numpy(X_competition_test.astype(np.float32)).to(device)
+
+    # --- 2. Make Predictions ---
+    all_predictions = []
+
+    # We don't need a DataLoader here if we can fit it all in memory,
+    # but it's good practice to still use torch.no_grad().
+    with torch.no_grad():
+        # Pass the entire tensor of competition features to the model
+        predictions_tensor = loaded_model(X_competition_tensor)
+
+    # --- 3. Process the Predictions ---
+    # The output will be a PyTorch tensor on the GPU (if used).
+    # Move it back to the CPU and convert it to a NumPy array.
+    predictions_numpy = predictions_tensor.cpu().numpy()
+
+    mo.md(f"Predictions generated successfully. Shape: **{predictions_numpy.shape}**")
+    mo.md("(Should be num_competition_runs, 49)")
+
+    # You can now put these predictions into a DataFrame for submission
+    # Assume you have the order of RunIds for the competition test set
+    # competition_run_ids = [...]
+    # target_column_names = [f'point_{i}' for i in range(49)] # The same column names as your y_train
+
+    # predictions_df = pd.DataFrame(
+    #     predictions_numpy,
+    #     index=competition_run_ids,
+    #     columns=target_column_names
+    # )
+    # predictions_df.index.name = 'RunId'
+    #
+    # mo.md("#### Sample of Final Predictions:")
+    # predictions_df.head()
+    return
+
+
+@app.cell
+def _(load_concat):
+    submission_file = load_concat("./data/submission/", "metrology_data.parquet")
+    submission_file_temp = submission_file.copy()
+    submission_file_temp = submission_file_temp.drop("Measurement", axis = 1)
+
+    run_data_test_df = load_concat("./data/test/", "run_data.parquet")
+    incoming_run_data_test_df = load_concat("./data/test/", "incoming_run_data.parquet")
+
+    run_data_test_df_sorted = run_data_test_df.sort_values(by = ["Run ID", "Time Stamp"])
+    run_data_test_pivoted = run_data_test_df_sorted.pivot_table(
+        index = ['Run ID', 'Time Stamp'],
+        columns = 'Sensor Name', 
+        values = 'Sensor Value'
+    )
+
+    incoming_run_data_test_df_sorted = incoming_run_data_test_df.sort_values(by = ["Run ID", "Time Stamp"])
+    incoming_run_data_test_pivoted = incoming_run_data_test_df_sorted.pivot_table(
+        index = ['Run ID', 'Time Stamp'],
+        columns = 'Sensor Name', 
+        values = 'Sensor Value'
+    )
+
+    run_data_test_pivoted.reset_index()
+    incoming_run_data_test_pivoted.reset_index()
+    return incoming_run_data_test_pivoted, run_data_test_pivoted
+
+
+@app.cell
+def _(incoming_run_data_test_pivoted, pd, run_data_test_pivoted):
+    combined_test_df = pd.concat([run_data_test_pivoted, incoming_run_data_test_pivoted])
+    combined_test_df_sorted = combined_test_df.sort_values(
+        by=['Run ID', 'Time Stamp']
+    )
+    combined_test_df_sorted = combined_test_df_sorted.reset_index()
+    combined_test_df_sorted.columns
+    return
+
+
+@app.cell
+def _():
     return
 
 
