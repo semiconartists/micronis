@@ -189,7 +189,7 @@ def _(acf, all_combined_df_sorted, find_peaks, linregress, np, pd):
         time_series_feats, sensor_columns = sensor_cols
     ).fillna(0)
     run_level_features_df.head()
-    return (run_level_features_df,)
+    return run_level_features_df, sensor_cols, time_series_feats
 
 
 @app.cell
@@ -198,7 +198,7 @@ def _(all_run_data_df):
     agg_dict_static = {col: 'first' for col in static_feature_columns}
     static_feature_df = all_run_data_df.groupby("Run ID").agg(agg_dict_static)
     static_feature_df.head()
-    return (static_feature_df,)
+    return agg_dict_static, static_feature_df
 
 
 @app.cell
@@ -305,7 +305,15 @@ def _(
 
 
 
-    return X_train, test_loader, train_loader, val_loader, y_train
+    return (
+        X_train,
+        encoded_tool_ids,
+        feature_columns,
+        test_loader,
+        train_loader,
+        val_loader,
+        y_train,
+    )
 
 
 @app.cell
@@ -478,7 +486,7 @@ def _(mo, pytorch_model, torch):
 
 
 @app.cell
-def _(MLP, MODEL_SAVE_PATH, device, mo, num_features, num_outputs, torch):
+def _(MLP, MODEL_SAVE_PATH, device, num_features, num_outputs, torch):
     ## LOADING MODEL 
 
     # 1. First, you must create an instance of the model with the same architecture.
@@ -494,9 +502,88 @@ def _(MLP, MODEL_SAVE_PATH, device, mo, num_features, num_outputs, torch):
 
     # Move the model to the correct device (cpu/gpu)
     loaded_model.to(device)
-
-    mo.md("Model weights successfully loaded and model is ready for inference.")
     return (loaded_model,)
+
+
+@app.cell
+def _(load_concat):
+    submission_file = load_concat("./data/submission/", "metrology_data.parquet")
+    submission_file_temp = submission_file.copy()
+    submission_file_temp = submission_file_temp.drop("Measurement", axis = 1)
+
+    run_data_test_df = load_concat("./data/test/", "run_data.parquet")
+    incoming_run_data_test_df = load_concat("./data/test/", "incoming_run_data.parquet")
+
+    run_data_test_df_sorted = run_data_test_df.sort_values(by = ["Run ID", "Time Stamp"])
+    run_data_test_pivoted = run_data_test_df_sorted.pivot_table(
+        index = ['Run ID', 'Time Stamp'],
+        columns = 'Sensor Name', 
+        values = 'Sensor Value'
+    )
+
+    incoming_run_data_test_df_sorted = incoming_run_data_test_df.sort_values(by = ["Run ID", "Time Stamp"])
+    incoming_run_data_test_pivoted = incoming_run_data_test_df_sorted.pivot_table(
+        index = ['Run ID', 'Time Stamp'],
+        columns = 'Sensor Name', 
+        values = 'Sensor Value'
+    )
+
+    run_data_test_pivoted.reset_index()
+    incoming_run_data_test_pivoted.reset_index()
+    return (
+        incoming_run_data_test_pivoted,
+        run_data_test_df,
+        run_data_test_pivoted,
+    )
+
+
+@app.cell
+def _(incoming_run_data_test_pivoted, pd, run_data_test_pivoted):
+    combined_test_df = pd.concat([run_data_test_pivoted, incoming_run_data_test_pivoted])
+    combined_test_df_sorted = combined_test_df.sort_values(
+        by=['Run ID', 'Time Stamp']
+    )
+    combined_test_df_sorted = combined_test_df_sorted.reset_index()
+    combined_test_df_sorted.columns
+    return (combined_test_df_sorted,)
+
+
+@app.cell
+def _(
+    agg_dict_static,
+    combined_test_df_sorted,
+    run_data_test_df,
+    sensor_cols,
+    time_series_feats,
+):
+    run_level_features_test_df = combined_test_df_sorted.groupby("Run ID").apply(
+        time_series_feats, sensor_columns = sensor_cols
+    ).fillna(0)
+    static_feature_test_df = run_data_test_df.groupby("Run ID").agg(agg_dict_static)
+
+
+    return run_level_features_test_df, static_feature_test_df
+
+
+@app.cell
+def _(pd, run_level_features_test_df, static_feature_test_df):
+    final_features_test_df = pd.merge(
+        left = run_level_features_test_df,
+        right = static_feature_test_df,
+        how="left",
+        left_index = True,
+        right_index = True
+    )
+    final_features_test_df = final_features_test_df.reset_index()
+    return (final_features_test_df,)
+
+
+@app.cell
+def _(encoded_tool_ids, feature_columns, final_features_test_df):
+    X_competition_test = final_features_test_df[feature_columns].values
+    for n in range(len(X_competition_test)):
+        X_competition_test[n][-1] = float(encoded_tool_ids[n])
+    return (X_competition_test,)
 
 
 @app.cell
@@ -542,50 +629,6 @@ def _(X_competition_test, device, loaded_model, mo, np, torch):
     #
     # mo.md("#### Sample of Final Predictions:")
     # predictions_df.head()
-    return
-
-
-@app.cell
-def _(load_concat):
-    submission_file = load_concat("./data/submission/", "metrology_data.parquet")
-    submission_file_temp = submission_file.copy()
-    submission_file_temp = submission_file_temp.drop("Measurement", axis = 1)
-
-    run_data_test_df = load_concat("./data/test/", "run_data.parquet")
-    incoming_run_data_test_df = load_concat("./data/test/", "incoming_run_data.parquet")
-
-    run_data_test_df_sorted = run_data_test_df.sort_values(by = ["Run ID", "Time Stamp"])
-    run_data_test_pivoted = run_data_test_df_sorted.pivot_table(
-        index = ['Run ID', 'Time Stamp'],
-        columns = 'Sensor Name', 
-        values = 'Sensor Value'
-    )
-
-    incoming_run_data_test_df_sorted = incoming_run_data_test_df.sort_values(by = ["Run ID", "Time Stamp"])
-    incoming_run_data_test_pivoted = incoming_run_data_test_df_sorted.pivot_table(
-        index = ['Run ID', 'Time Stamp'],
-        columns = 'Sensor Name', 
-        values = 'Sensor Value'
-    )
-
-    run_data_test_pivoted.reset_index()
-    incoming_run_data_test_pivoted.reset_index()
-    return incoming_run_data_test_pivoted, run_data_test_pivoted
-
-
-@app.cell
-def _(incoming_run_data_test_pivoted, pd, run_data_test_pivoted):
-    combined_test_df = pd.concat([run_data_test_pivoted, incoming_run_data_test_pivoted])
-    combined_test_df_sorted = combined_test_df.sort_values(
-        by=['Run ID', 'Time Stamp']
-    )
-    combined_test_df_sorted = combined_test_df_sorted.reset_index()
-    combined_test_df_sorted.columns
-    return
-
-
-@app.cell
-def _():
     return
 
 
