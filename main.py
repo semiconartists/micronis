@@ -23,6 +23,7 @@ def _():
     import plotly.express as px
     from scipy.signal import find_peaks # New import for peak finding
     from statsmodels.tsa.stattools import acf # New import for autocorrelation
+    from tqdm.auto import tqdm
     return (
         DataLoader,
         LabelEncoder,
@@ -238,7 +239,6 @@ def _(final_features_df, pd, target_df):
         on = "Run ID"
     )
     training_df.shape
-
     return (training_df,)
 
 
@@ -279,7 +279,6 @@ def _(
     X_val = scaler.transform(X_val)
     X_test = scaler.transform(X_test)
 
-
     # --- 1c. Convert NumPy arrays to PyTorch Tensors ---
     X_train_tensor = torch.from_numpy(X_train)
     y_train_tensor = torch.from_numpy(y_train)
@@ -307,8 +306,8 @@ def _(
 
     return (
         X_train,
-        encoded_tool_ids,
         feature_columns,
+        le,
         test_loader,
         train_loader,
         val_loader,
@@ -507,9 +506,6 @@ def _(MLP, MODEL_SAVE_PATH, device, num_features, num_outputs, torch):
 
 @app.cell
 def _(load_concat):
-    submission_file = load_concat("./data/submission/", "metrology_data.parquet")
-    submission_file_temp = submission_file.copy()
-    submission_file_temp = submission_file_temp.drop("Measurement", axis = 1)
 
     run_data_test_df = load_concat("./data/test/", "run_data.parquet")
     incoming_run_data_test_df = load_concat("./data/test/", "incoming_run_data.parquet")
@@ -574,46 +570,48 @@ def _(pd, run_level_features_test_df, static_feature_test_df):
         left_index = True,
         right_index = True
     )
-    final_features_test_df = final_features_test_df.reset_index()
+    final_features_test_df
     return (final_features_test_df,)
 
 
 @app.cell
-def _(encoded_tool_ids, feature_columns, final_features_test_df):
-    X_competition_test = final_features_test_df[feature_columns].values
-    for n in range(len(X_competition_test)):
-        X_competition_test[n][-1] = float(encoded_tool_ids[n])
-    return (X_competition_test,)
+def _(feature_columns, final_features_test_df):
+    X_competition_test_df = final_features_test_df[feature_columns]
+    X_competition_test_df.reset_index()
+
+    #for n in range(len(X_competition_test)):
+    #    X_competition_test[n][-1] = float(encoded_tool_ids[n])
+
+
+    return (X_competition_test_df,)
 
 
 @app.cell
-def _(X_competition_test, device, loaded_model, mo, np, torch):
-    ## USING MODEL FOR PREDICTION
+def _(load_concat):
+    submission_df = load_concat("./data/submission/", "metrology_data.parquet")
+    submission_runids = submission_df["Run ID"].unique()
+    submission_df.set_index(["Run ID", "Point Index"], inplace = True)
+
+    return (submission_runids,)
 
 
-    # Assume 'loaded_model' is your trained model, ready for inference.
-    # Assume 'X_competition_test' is your preprocessed competition feature set (as a NumPy array).
-
-    # --- 1. Prepare the Competition Data ---
-    # Convert the NumPy array to a PyTorch tensor and move to the correct device
-    X_competition_tensor = torch.from_numpy(X_competition_test.astype(np.float32)).to(device)
-
-    # --- 2. Make Predictions ---
-    all_predictions = []
-
-    # We don't need a DataLoader here if we can fit it all in memory,
-    # but it's good practice to still use torch.no_grad().
+@app.cell
+def _(X_competition_test_df, le, loaded_model, submission_runids, torch):
+    loaded_model.eval()
     with torch.no_grad():
-        # Pass the entire tensor of competition features to the model
-        predictions_tensor = loaded_model(X_competition_tensor)
+        for run_id in submission_runids:
+            features_for_run = X_competition_test_df.loc[run_id].values
+            print(le.transform((features_for_run[-1], )))
+            # features_for_run[-1] = le.transform(features_for_run[-1])
+            # features_tensor = torch.from_numpy(features_for_run.astype(np.float32)).unsqueeze(0).to(device)
+            # prediction_tensor = loaded_model(features_tensor)
+            # predicted_measurements = prediction_tensor.cpu().numpy().squeeze()
+            # print(type(predicted_measurements))
+            # final_submission_df.loc[(run_id, ), 'Measurement'] = predicted_measurements
 
-    # --- 3. Process the Predictions ---
-    # The output will be a PyTorch tensor on the GPU (if used).
-    # Move it back to the CPU and convert it to a NumPy array.
-    predictions_numpy = predictions_tensor.cpu().numpy()
 
-    mo.md(f"Predictions generated successfully. Shape: **{predictions_numpy.shape}**")
-    mo.md("(Should be num_competition_runs, 49)")
+
+
 
     # You can now put these predictions into a DataFrame for submission
     # Assume you have the order of RunIds for the competition test set
