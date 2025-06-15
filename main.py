@@ -6,7 +6,6 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    # File Reading Packages 
     import marimo as mo
     import pandas as pd
     import glob
@@ -21,8 +20,8 @@ def _():
     import torch.nn as nn
     import torch.optim as optim
     import plotly.express as px
-    from scipy.signal import find_peaks # New import for peak finding
-    from statsmodels.tsa.stattools import acf # New import for autocorrelation
+    from scipy.signal import find_peaks
+    from statsmodels.tsa.stattools import acf
     from tqdm.auto import tqdm
     return (
         DataLoader,
@@ -68,42 +67,19 @@ def _(glob, os, pd):
 @app.cell
 def _(load_concat):
     all_run_data_df = load_concat("./data/train/", "run_data_*.parquet")
-    if not all_run_data_df.empty:
-        all_run_data_df.info()
-    all_run_data_df.shape
     return (all_run_data_df,)
 
 
-@app.cell
-def _(all_run_data_df):
-    # Number of unique values for each var
-    num_unique_runs = all_run_data_df.nunique()
-    num_unique_runs
-
-    '''
-    Since number of run ids are < 5000 and sensor name is < 50, it is reasonable to pivot the table. 
-    '''
-
-    return
-
-
-@app.cell
-def _(all_run_data_df):
-    # Pivot the Data 
-    all_run_data_df_sorted = all_run_data_df.sort_values(by = ["Run ID", "Time Stamp"])
-    # Pivoting Sensor Data
-    try:
+app._unparsable_cell(
+    r"""
+    all_run_data_df_sorted = all_run_data_df.sort_values(by = [\"Run ID\", \"Time Stamp\"])
         pivoted_df = all_run_data_df_sorted.pivot_table(
             index = ['Run ID', 'Time Stamp'],
             columns = 'Sensor Name', 
             values = 'Sensor Value'
         )
-    except Exception as e:
-        pass
-
     pivoted_df.head()
 
-    # Handle NA values
     def fill_na(group):
         return group.ffill().bfill()
     if not pivoted_df.empty:
@@ -112,7 +88,9 @@ def _(all_run_data_df):
     rem_NAs
     pivot_df_filled = pivot_df_filled.reset_index()
     pivot_df_filled.head()
-    return (pivot_df_filled,)
+    """,
+    name="_"
+)
 
 
 @app.cell
@@ -203,7 +181,6 @@ def _(all_run_data_df):
 
 @app.cell
 def _(pd, run_level_features_df, static_feature_df):
-    # Merge Consumbale life to df
     final_features_df = pd.merge(
         left = run_level_features_df,
         right = static_feature_df,
@@ -260,7 +237,6 @@ def _(
 
     X = X.astype(np.float32)
 
-    # --- 1b. Create Training, Validation, and Test Sets ---
     X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2, random_state=42)
     X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
     scaler = StandardScaler()
@@ -269,7 +245,6 @@ def _(
     X_val = scaler.transform(X_val)
     X_test = scaler.transform(X_test)
 
-    # --- 1c. Convert NumPy arrays to PyTorch Tensors ---
     X_train_tensor = torch.from_numpy(X_train)
     y_train_tensor = torch.from_numpy(y_train)
 
@@ -279,8 +254,6 @@ def _(
     X_test_tensor = torch.from_numpy(X_test)
     y_test_tensor = torch.from_numpy(y_test)
 
-    # --- 1d. Create PyTorch DataLoaders ---
-    # DataLoaders handle batching, shuffling, etc. automatically.
     BATCH_SIZE = 32
 
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
@@ -337,10 +310,8 @@ def _(X_train, nn, torch, y_train):
         def forward(self, x):
             return self.layers(x)
 
-    # Instantiate the model
     pytorch_model = MLP(num_features, num_outputs)
 
-    # Move model to GPU if available (optional but recommended)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     pytorch_model.to(device)
     pytorch_model
@@ -364,94 +335,64 @@ def _(
     optimizer = optim.Adam(pytorch_model.parameters(), lr=0.001)
     EPOCHS = 200
 
-    # --- Training Loop ---
-    # Lists to store loss history for plotting
     train_losses = []
     val_losses = []
 
 
     for epoch in range(EPOCHS):
-        # --- Training Phase ---
-        pytorch_model.train() # Set the model to training mode (enables dropout, etc.)
+        pytorch_model.train() 
         batch_train_loss = 0.0
         for X_batch, y_batch in train_loader:
-            # Move data to the same device as the model
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
 
-            # 1. Forward pass: compute predicted y by passing x to the model
             y_pred = pytorch_model(X_batch)
 
-            # 2. Calculate loss
             loss = loss_fn(y_pred, y_batch)
-            batch_train_loss += loss.item() # .item() gets the scalar value of the loss
+            batch_train_loss += loss.item()
 
-            # 3. Zero gradients: clear the gradients of all optimized variables
             optimizer.zero_grad()
 
-            # 4. Backward pass: compute gradient of the loss with respect to model parameters
             loss.backward()
 
-            # 5. Update weights: call step() to cause the optimizer to update the parameters
             optimizer.step()
 
-        # Calculate average training loss for the epoch
         avg_train_loss = batch_train_loss / len(train_loader)
         train_losses.append(avg_train_loss)
 
-        # --- Validation Phase ---
-        pytorch_model.eval() # Set the model to evaluation mode (disables dropout, etc.)
+        pytorch_model.eval()
         batch_val_loss = 0.0
-        with torch.no_grad(): # In validation, we don't need to compute gradients
+        with torch.no_grad(): 
             for X_batch, y_batch in val_loader:
                 X_batch, y_batch = X_batch.to(device), y_batch.to(device)
                 y_pred = pytorch_model(X_batch)
                 loss = loss_fn(y_pred, y_batch)
                 batch_val_loss += loss.item()
 
-        # Calculate average validation loss for the epoch
         avg_val_loss = batch_val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
 
-        # Print progress for each epoch
         print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
     print("Training complete.")
 
-    # --- Evaluation Loop ---
-
-        # 1. Set the model to evaluation mode.
-        # This is crucial as it disables layers like Dropout.
     pytorch_model.eval()
 
-        # Variable to accumulate the loss
     total_test_loss = 0.0
 
-        # 2. Disable gradient calculations to save memory and computation
     with torch.no_grad():
-        # 3. Loop through the test data loader
         for X_batch, y_batch in test_loader:
-            # Move data to the same device as the model
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
 
-            # Make predictions
             y_pred = pytorch_model(X_batch)
 
-            # Calculate the loss (MSE) for this batch
             loss = loss_fn(y_pred, y_batch)
 
-            # Accumulate the loss
-            # We multiply by the batch size to get the total sum of squared errors,
-            # which is more accurate than averaging averages if the last batch is smaller.
             total_test_loss += loss.item() * X_batch.size(0)
 
-    # 4. Calculate the final average Mean Squared Error (MSE)
-    # Divide the total loss by the total number of samples in the test set
     avg_test_mse = total_test_loss / len(test_loader.dataset)
 
-    # 5. Calculate the Root Mean Squared Error (RMSE)
     final_rmse = np.sqrt(avg_test_mse)
 
-    # --- Display the Results ---
     mo.md("#### Final Model Performance on Unseen Test Data:")
     mo.md(f"- **Average Test MSE**: {avg_test_mse:.6f}")
     mo.md(f"### **Final Test RMSE**: {final_rmse:.6f}")
@@ -461,12 +402,9 @@ def _(
 
 @app.cell
 def _(mo, pytorch_model, torch):
-    ## SAVING MODEL
 
-    # Define a path to save the model
     MODEL_SAVE_PATH = "semiconartists_model.pth" # .pth or .pt are common extensions
 
-    # Save the model's state dictionary
     torch.save(pytorch_model.state_dict(), MODEL_SAVE_PATH)
 
     mo.md(f"Model weights successfully saved to: **`{MODEL_SAVE_PATH}`**")
@@ -475,20 +413,12 @@ def _(mo, pytorch_model, torch):
 
 @app.cell
 def _(MLP, MODEL_SAVE_PATH, device, num_outputs, torch):
-    ## LOADING MODEL 
-
-    # 1. First, you must create an instance of the model with the same architecture.
-    # The model must have the same layers and shapes as the one you saved.
-    # Assume 'num_features' and 'num_outputs' are defined.
     loaded_model = MLP(505, num_outputs)
 
-    # 2. Load the state dictionary from the file
     loaded_model.load_state_dict(torch.load(MODEL_SAVE_PATH))
 
-    # 3. IMPORTANT: Set the model to evaluation mode
     loaded_model.eval()
 
-    # Move the model to the correct device (cpu/gpu)
     loaded_model.to(device)
     return (loaded_model,)
 
@@ -568,8 +498,6 @@ def _(feature_columns, final_features_test_df):
     X_competition_test_df = final_features_test_df[feature_columns]
     X_competition_test_df.reset_index()
 
-    #for n in range(len(X_competition_test)):
-    #    X_competition_test[n][-1] = float(encoded_tool_ids[n])
 
 
     return (X_competition_test_df,)
