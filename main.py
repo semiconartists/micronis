@@ -26,7 +26,6 @@ def _():
     from tqdm.auto import tqdm
     return (
         DataLoader,
-        LabelEncoder,
         StandardScaler,
         TensorDataset,
         acf,
@@ -245,7 +244,6 @@ def _(final_features_df, pd, target_df):
 @app.cell
 def _(
     DataLoader,
-    LabelEncoder,
     StandardScaler,
     TensorDataset,
     np,
@@ -256,18 +254,10 @@ def _(
     target_columns = [i for i in range(0, 49)]
     feature_columns = [col for col in training_df if col not in target_columns]
     feature_columns.pop(0)
+    feature_columns.pop(-1)
     y = training_df[target_columns].values.astype(np.float32)
     X = training_df[feature_columns].values
-    # Step 1: extract all Tool IDs (second-last column)
-    tool_ids = [row[-1] for row in X]
 
-    # Step 2: encode them
-    le = LabelEncoder()
-    encoded_tool_ids = le.fit_transform(tool_ids)
-
-    # Step 3: overwrite second-last column in each row
-    for i in range(len(X)):
-        X[i][-1] = float(encoded_tool_ids[i])
     X = X.astype(np.float32)
 
     # --- 1b. Create Training, Validation, and Test Sets ---
@@ -307,7 +297,6 @@ def _(
     return (
         X_train,
         feature_columns,
-        le,
         test_loader,
         train_loader,
         val_loader,
@@ -355,7 +344,7 @@ def _(X_train, nn, torch, y_train):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     pytorch_model.to(device)
     pytorch_model
-    return MLP, device, num_features, num_outputs, pytorch_model
+    return MLP, device, num_outputs, pytorch_model
 
 
 @app.cell
@@ -485,13 +474,13 @@ def _(mo, pytorch_model, torch):
 
 
 @app.cell
-def _(MLP, MODEL_SAVE_PATH, device, num_features, num_outputs, torch):
+def _(MLP, MODEL_SAVE_PATH, device, num_outputs, torch):
     ## LOADING MODEL 
 
     # 1. First, you must create an instance of the model with the same architecture.
     # The model must have the same layers and shapes as the one you saved.
     # Assume 'num_features' and 'num_outputs' are defined.
-    loaded_model = MLP(num_features, num_outputs)
+    loaded_model = MLP(505, num_outputs)
 
     # 2. Load the state dictionary from the file
     loaded_model.load_state_dict(torch.load(MODEL_SAVE_PATH))
@@ -592,41 +581,36 @@ def _(load_concat):
     submission_runids = submission_df["Run ID"].unique()
     submission_df.set_index(["Run ID", "Point Index"], inplace = True)
 
-    return (submission_runids,)
+    return submission_df, submission_runids
 
 
 @app.cell
-def _(X_competition_test_df, le, loaded_model, submission_runids, torch):
+def _(
+    X_competition_test_df,
+    device,
+    loaded_model,
+    np,
+    submission_df,
+    submission_runids,
+    torch,
+):
     loaded_model.eval()
     with torch.no_grad():
         for run_id in submission_runids:
             features_for_run = X_competition_test_df.loc[run_id].values
-            print(le.transform((features_for_run[-1], )))
-            # features_for_run[-1] = le.transform(features_for_run[-1])
-            # features_tensor = torch.from_numpy(features_for_run.astype(np.float32)).unsqueeze(0).to(device)
-            # prediction_tensor = loaded_model(features_tensor)
-            # predicted_measurements = prediction_tensor.cpu().numpy().squeeze()
-            # print(type(predicted_measurements))
-            # final_submission_df.loc[(run_id, ), 'Measurement'] = predicted_measurements
+            features_tensor = torch.from_numpy(features_for_run.astype(np.float32)).unsqueeze(0).to(device)
+            prediction_tensor = loaded_model(features_tensor)
+            predicted_measurements = prediction_tensor.cpu().numpy().squeeze()
+            for idx, measurement in enumerate(predicted_measurements):
+                submission_df.loc[(run_id, idx), 'Measurement'] = measurement
+    return
 
 
-
-
-
-    # You can now put these predictions into a DataFrame for submission
-    # Assume you have the order of RunIds for the competition test set
-    # competition_run_ids = [...]
-    # target_column_names = [f'point_{i}' for i in range(49)] # The same column names as your y_train
-
-    # predictions_df = pd.DataFrame(
-    #     predictions_numpy,
-    #     index=competition_run_ids,
-    #     columns=target_column_names
-    # )
-    # predictions_df.index.name = 'RunId'
-    #
-    # mo.md("#### Sample of Final Predictions:")
-    # predictions_df.head()
+@app.cell
+def _(submission_df):
+    final_submission_to_save = submission_df.reset_index()
+    final_submission_to_save.to_csv("final_submission.csv", index=False)
+    final_submission_to_save.head()
     return
 
 
